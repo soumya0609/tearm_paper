@@ -1,0 +1,132 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import odeint
+
+# Simulation parameters
+Tstep = 0.1
+Tmax = 1000
+
+# Model parameters
+b = [np.nan, 0.5, 0.4, 0.3, 0.25]
+csyn = 20
+d = [np.nan, 0.25, 0.3, 0.2]
+
+# Define the modified Hill's coefficient parameters
+theta_max = 4  # Maximum value of Hill's coefficient
+ln_max = 1.0  # Logarithm of the oxygen partial pressure value at which hmax is determined
+s = 3.0  # Scale parameter for the Lorentz distribution
+
+def theta_redefined(y):
+    epsilon = 1e-10  # A small positive value to prevent log(0)
+    thetai = []
+    for i in range(len(y)):
+        arg = y[i] / np.exp(ln_max)
+        if arg <= epsilon:
+            arg = epsilon  # Ensure the argument is positive and not too close to zero
+        thetai_i = ((theta_max - 1) / (1 + (np.log(arg) / s) ** 2)) + 1
+        thetai.append(thetai_i)
+    return thetai
+
+K = 500
+kp = 4
+kdp = 0.5
+
+# Define the flux functions
+def Jin(y):
+    return b[1] * y[1] + b[2] * y[2] + b[3] * y[3]
+
+def J1(y):
+    return Jin(y)
+
+def J2(y):
+    thetai = theta_redefined(y)
+    base = y[2] ** thetai[2]
+    return csyn * y[0] / (1 + K * (base if base >= 0 else 0))
+
+def J3(y):
+    thetai = theta_redefined(y)
+    base = y[3] ** thetai[3]
+    return csyn * y[0] / (1 + K * (base if base >= 0 else 0))
+
+def J4(y):
+    thetai = theta_redefined(y)
+    base = y[1] ** thetai[1]
+    return csyn * y[0] / (1 + K * (base if base >= 0 else 0))
+
+
+def Jd2(y):
+    return d[2] * y[1] + kp * y[4]
+
+def Jd3(y):
+    return d[3] * y[2]
+
+def Jd4(y):
+    return d[3] * y[3]
+
+def F1(y):
+    return J1(y) - J2(y) - J3(y) - J4(y)
+
+def F2(y):
+    return J2(y) - Jd2(y)
+
+def F3(y):
+    return J3(y) - Jd3(y)
+
+def F4(y):
+    return J4(y) - Jd4(y)
+
+def F5(y):
+    return -kdp * y[4]
+
+# Define the MCMC functions
+
+# Function to perform MCMC simulation at each step
+def perform_mcmc_step(current_state):
+    # Define a proposal distribution and generate a proposed state
+    proposed_state = current_state + np.random.normal(0, 0.01, len(current_state))
+    proposed_state = np.maximum(proposed_state, 0)  # Ensure concentrations are non-negative
+
+    # Calculate the likelihood of the proposed state
+    likelihood_current = likelihood_1(current_state)
+    likelihood_proposed = likelihood_1(proposed_state)
+
+    # Calculate the acceptance ratio
+    acceptance_ratio = likelihood_proposed / likelihood_current
+
+    # Accept or reject the proposed state based on the acceptance ratio
+    if np.random.rand() < acceptance_ratio:
+        return proposed_state  # Accept the proposed state
+    else:
+        return current_state  # Reject and stay in the current state
+
+# Function to calculate the likelihood of a state
+def likelihood_1(state):
+    # Calculate the expected state based on your model
+    expected_state = np.array([F1(state), F2(state), F3(state), F4(state), F5(state)])  # Include F5(state)
+
+    # Calculate the likelihood based on a normal distribution
+    sigma = 0.1  # The standard deviation of the noise
+    likelihood_1 = 1.0 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-0.5 * np.sum((state - expected_state)**2) / (sigma**2))
+
+    return likelihood_1
+
+# Initial condition
+y0 = [0.1, 0.3, 0.3, 0.3, 0.01]
+current_state = np.maximum(np.array(y0) / np.sum(y0), 0)  # Ensure initial concentrations are non-negative
+
+# Perform MCMC simulation
+t_sol = np.arange(0, Tmax + Tstep, Tstep)
+states = []
+
+for t in t_sol:
+    states.append(current_state)
+    current_state = perform_mcmc_step(current_state)
+
+# Plot the states over time
+states = np.array(states)
+plt.figure()
+plt.plot(t_sol, states)
+plt.xlabel('Time')
+plt.ylabel('State')
+plt.title('MCMC Simulation of Chemical System')
+plt.show()
