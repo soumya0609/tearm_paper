@@ -1,0 +1,96 @@
+import numpy as np
+from scipy.integrate import odeint
+import matplotlib.pyplot as plt
+
+# Simulation parameters
+Tstep = 0.1
+Tmax = 1000
+n = int(input("Enter the value of n: "))  # Number of nodes
+K = 500  # Repression strength
+theta = 4  # Hill coefficient
+num_cells = 100  # Number of cells
+
+# Model parameters (same for all cells)
+
+b = [np.nan, 0.5, 0.4, 0.3]
+csyn = 20
+d = [np.nan, 0.25, 0.3, 0.2]
+
+# Initialize an array for storing cell states
+cell_states = np.random.rand(num_cells, n)
+cell_states /= np.sum(cell_states, axis=1)[:, np.newaxis]  # Normalize each row
+
+
+# Define flux functions
+def Jin(y):
+    return sum(b[j] * y[j] for j in range(1, n))
+
+
+def Ji(y, j):
+    if j != n:
+        return csyn * y[0] / (1 + K * (y[j] ** theta))
+    elif j == n:
+        return csyn * y[0] / (1 + K * (y[1] ** theta))
+
+
+def summyJi(y):
+    L_ = []
+    for j in range(2, n + 1):
+        if j != n:
+            L_.append(csyn * y[0] / (1 + K * (y[j] ** theta)))
+        elif j == n:
+            L_.append(csyn * y[0] / (1 + K * (y[1] ** theta)))
+    return sum(L_)
+
+
+def Jdi(y, j):
+    return d[j - 1] * y[j - 1]
+
+
+def sum_Jdi(y):
+    L = [Jdi(y, j) for j in range(2, n + 1)]
+    return sum(L)
+
+
+def F(y):
+    return [Jin(y) - summyJi(y)] + [Ji(y, j) - Jdi(y, j) for j in range(2, n + 1)]
+
+
+def mu(y):
+    return sum(F(y))
+
+
+# Define the ODE system
+def system(y, t):
+    return F(y) - mu(y) * y
+
+
+rtol = 1e-8  # Relative tolerance
+atol = 1e-8  # Absolute tolerance
+
+# Initialize arrays to store the results
+t_sol = np.arange(0, Tmax + Tstep, Tstep)
+y_sol = np.zeros((num_cells, t_sol.shape[0], n))
+
+# Simulate the system for each cell
+for j in range(num_cells):
+    y0 = cell_states[j]
+    y_sol[j] = odeint(system, y0, t_sol, rtol=rtol, atol=atol)
+
+# Calculate the long-term growth rate for each cell
+mu_vec = np.empty((num_cells, t_sol.shape[0]))
+for i in range(num_cells):
+    for j in range(t_sol.shape[0]):
+        mu_vec[i, j] = mu(y_sol[i, j])
+
+mean = np.mean(mu_vec)
+print(mean)
+
+# Plot mu vs time for all cells
+plt.figure(figsize=(10, 6))
+for j in range(num_cells):
+    plt.plot(t_sol, mu_vec[j])
+plt.xlabel('Time')
+plt.ylabel('mu')
+plt.title('mu vs Time for Multiple Cells')
+plt.show()
