@@ -1,0 +1,102 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import odeint
+
+# Simulation parameters
+Tstep = 0.1
+Tmax = 1000
+optA = {'rtol': 1e-8, 'atol': 1e-8}
+
+# Model parameters
+b = [np.nan, 0.5, 0.4, 0.3]
+csyn = 20
+d = [np.nan, 0.25, 0.3, 0.2]
+theta = 4
+K = 500
+kp = 4
+kdp = 0.5
+
+# Model description
+
+def Jin(y):
+    return b[1]*y[1] + b[2]*y[2] + b[3]*y[3]
+
+def J1(y):
+    return Jin(y)
+
+def J2(y):
+    return csyn * y[0] / (1 + K * (y[2]**theta))
+
+def J3(y):
+    return csyn * y[0] / (1 + K * (y[3]**theta))
+
+def J4(y):
+    return csyn * y[0] / (1 + K * (y[1]**theta))
+
+def Jd2(y):
+    return d[2] * y[1] + kp*y[4]
+
+def Jd3(y):
+    return d[3] * y[2]
+
+def Jd4(y):
+    return d[3] * y[3]
+
+def F1(y):
+    return J1(y) - J2(y) - J3(y) - J4(y)
+
+def F2(y):
+    return J2(y) - Jd2(y)
+
+def F3(y):
+    return J3(y) - Jd3(y)
+
+def F4(y):
+    return J4(y) - Jd4(y)
+
+def F5(y):
+    return -kdp * y[4]
+
+# Initial condition
+y0 = [0.1, 0.3, 0.3, 0.3, 0.01]
+y0 = np.array(y0) / np.sum(y0)
+
+def F(y):
+    return np.array([F1(y), F2(y), F3(y), F4(y), F5(y)])[:4]
+
+
+def mu(y):
+    return np.sum(F(y))
+
+def G(y, t):
+    return np.concatenate((F(y) - mu(y) * y[:4], [F5(y)]))
+
+t_sol = np.arange(0, Tmax + Tstep, Tstep)
+y_sol = odeint(G, y0, t_sol)
+
+time_step_rg = np.floor((Tmax / Tstep) * np.array([0.5, 1]))
+t_avg = t_sol[int(time_step_rg[0]):int(time_step_rg[1])]
+y_avg = y_sol[int(time_step_rg[0]):int(time_step_rg[1]), :]
+
+mu_vec = np.empty(t_avg.shape[0])
+for j in range(t_avg.shape[0]):
+    mu_vec[j] = mu(y_avg[j, :])
+
+LTGR = np.mean(mu_vec)
+
+t_plot = t_avg
+y_plot = y_avg
+
+plt.figure()
+plt.subplot(131)
+plt.plot(t_plot, y_plot, '.-')
+
+#...
+
+ax = plt.subplot(132, projection='3d')
+ax.plot(y_plot[:,1], y_plot[:,2], y_plot[:,3], '.')
+ax.view_init(elev=20, azim=20)
+plt.subplot(133)
+plt.plot(t_plot, mu_vec, '.-')
+
+plt.show()
