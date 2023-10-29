@@ -1,0 +1,121 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import odeint
+
+# Simulation parameters
+Tstep = 0.1
+Tmax = 1000
+optA = {'rtol': 1e-8, 'atol': 1e-8}
+
+# Model parameters
+b = [np.nan, 0.5, 0.4, 0.3, 0.25]
+csyn = 20
+d = [np.nan, 0.25, 0.3, 0.2]
+
+# Define the modified Hill's coefficient parameters
+theta_max = 4  # Maximum value of Hill's coefficient
+ln_max = 1.0  # Logarithm of the oxygen partial pressure value at which hmax is determined
+
+# Define a range of s values
+s_values = np.linspace(1.0, 10.0,5)  # Adjust the range and number of points as needed
+
+
+
+# Model description
+
+
+# Initialize an empty list to store LTGR values
+LTGR_values = []
+
+# Function to simulate the system for a given s
+def simulate_system(s):
+    def theta_redefined(y):
+        thetai = [((theta_max - 1) / (1 + (np.log(y[i] / np.exp(ln_max) + 1e-10) / s) ** 2))+1 for i in range(len(y))]
+        return thetai
+
+    K = 500
+    kp = 4
+    kdp = 0.5
+
+    # Model description
+    def Jin(y):
+        return b[1] * y[1] + b[2] * y[2] + b[3] * y[3]
+
+    def J1(y):
+        return Jin(y)
+
+    def J2(y):
+        thetai = theta_redefined(y)
+        return csyn * y[0] / (1 + K * (y[2] ** thetai[2]))
+
+    def J3(y):
+        thetai = theta_redefined(y)
+        return csyn * y[0] / (1 + K * (y[3] ** thetai[3]))
+
+    def J4(y):
+        thetai = theta_redefined(y)
+        return csyn * y[0] / (1 + K * (y[1] ** thetai[1]))
+
+    def Jd2(y):
+        return d[2] * y[1] + kp * y[4]
+
+    def Jd3(y):
+        return d[3] * y[2]
+
+    def Jd4(y):
+        return d[3] * y[3]
+
+    def F1(y):
+        return J1(y) - J2(y) - J3(y) - J4(y)
+
+    def F2(y):
+        return J2(y) - Jd2(y)
+
+    def F3(y):
+        return J3(y) - Jd3(y)
+
+    def F4(y):
+        return J4(y) - Jd4(y)
+
+    def F5(y):
+        return -kdp * y[4]
+
+    # Initial condition
+    y0 = [0.1, 0.3, 0.3, 0.3, 0.01]
+    y0 = np.array(y0) / np.sum(y0)
+
+    def F(y):
+        return np.array([F1(y), F2(y), F3(y), F4(y), F5(y)])[:4]
+
+    def mu(y):
+        return np.sum(F(y))
+
+    def G(y, t):
+        return np.concatenate((F(y) - mu(y) * y[:4], [F5(y)]))
+
+    t_sol = np.arange(0, Tmax + Tstep, Tstep)
+    y_sol = odeint(G, y0, t_sol)
+
+    time_step_rg = np.floor((Tmax / Tstep) * np.array([0.5, 1]))
+    t_avg = t_sol[int(time_step_rg[0]):int(time_step_rg[1])]
+    y_avg = y_sol[int(time_step_rg[0]):int(time_step_rg[1]), :]
+
+    mu_vec = np.empty(t_avg.shape[0])
+    for j in range(t_avg.shape[0]):
+        mu_vec[j] = mu(y_avg[j, :])
+    LTGR = np.mean(mu_vec)
+    return LTGR
+
+# Iterate through different s values and calculate LTGR
+for s in s_values:
+    LTGR = simulate_system(s)
+    LTGR_values.append(LTGR)
+
+# Plot LTGR vs s
+plt.figure()
+plt.plot(s_values, LTGR_values, marker='o')
+plt.xlabel('s')
+plt.ylabel('LTGR')
+plt.title('LTGR vs s')
+plt.grid(True)
+plt.show()
