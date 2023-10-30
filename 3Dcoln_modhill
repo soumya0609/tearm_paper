@@ -1,0 +1,75 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Define spatial and temporal discretization parameters
+Nr = 100  # Number of spatial points
+Nt = 1000  # Number of time steps
+Tmax = 1.0  # Maximum time
+Rcol = 1  # Define the colony radius
+Rboundary = Rcol + 1  # Define the boundary radius
+
+# Define spatial and temporal grids
+r = np.linspace(0, Rcol, Nr)
+t = np.linspace(0, Tmax, Nt)
+dr = r[1] - r[0]
+dt = t[1] - t[0]
+K = 500
+# Model parameters
+b = [np.nan, 0.5, 0.4, 0.3]
+csyn = 20
+d = [np.nan, 0.25, 0.3, 0.2]
+theta_max = 4  # Maximum value of Hill's coefficient
+ln_pmax = 1.0  # Logarithm of the oxygen partial pressure value at which hmax is determined
+s = 4
+
+# Define gradient at r=0
+dc_dr_0 = 0.0  # Gradient at r=0
+
+# Initialize concentration field as a 3D array
+c = np.zeros((Nr, Nt, 4))  # 4 components
+
+# Set initial condition for all components at t=0
+c0 = np.array([0.1, 0.3, 0.3, 0.3])
+
+c[:, 0, :] = c0  # Set the initial conditions
+
+# Define function to calculate modified Hill's coefficient
+def theta_redefined(c):
+    thetai = [((theta_max - 1) / (1 + (np.log(c[i] / np.exp(ln_pmax) + 1e-10) / s) ** 2)) + 1 for i in range(c.shape[0])]
+    return thetai
+
+# Time-stepping loop to solve the PDE
+for n in range(Nt - 1):
+    for i in range(1, Nr - 1):
+        thetai = theta_redefined(c[i, n, :])  # Calculate the modified Hill's coefficient
+
+        for j in range(4):  # Loop over components
+            current_c = c[i, n, j]
+
+            # Apply spatial diffusion term first
+            d2c_dr2 = (c[i + 1, n, j] - 2 * current_c + c[i - 1, n, j]) / (dr**2)
+            c[i, n + 1, j] = current_c + (dt / r[i]) * d2c_dr2
+
+            # Calculate the flux terms
+            if j == 0:
+                J_c = b[1] * c[i, n, 1] + b[2] * c[i, n, 2] + b[3] * c[i, n, 3]
+                Jd_c = 0
+            else:
+                J_c = csyn * c[i, n, 0] / (1 + K * (c[i, n, j] ** thetai[j]))
+                Jd_c = d[j] * c[i, n, j]
+
+            c[i, n + 1, j] = current_c + dt * (J_c - Jd_c)
+
+        # Enforce the gradient condition at r=0
+        for j in range(4):
+            c[0, n + 1, j] = c[1, n + 1, j] + dr * dc_dr_0
+
+# Plot the concentration field over time for all components
+for i in range(4):
+    plt.figure()
+    plt.imshow(c[:, :, i], extent=[0, Tmax, 0, Rcol], origin='lower', aspect='auto')
+    plt.xlabel('Time (t)')
+    plt.ylabel('Radial position (r)')
+    plt.title(f'Concentration Field for Component {i} over Time')
+    plt.colorbar()
+    plt.show()
