@@ -1,0 +1,209 @@
+
+import numpy as np
+from scipy.linalg import eig
+
+# Define spatial and temporal discretization parameters
+Nr = 100  # Number of spatial points
+Nt = 1000  # Number of time steps
+Tmax = 1.0  # Maximum time
+Rcol = 1  # Define the colony radius
+Rboundary = Rcol + 1  # Define the boundary radius
+
+# Define spatial and temporal grids
+r = np.linspace(0, Rcol, Nr)
+t = np.linspace(0, Tmax, Nt)
+dr = r[1] - r[0]
+dt = t[1] - t[0]
+K = 500
+
+# Model parameters
+b = [np.nan, 0.5, 0.4, 0.3]
+csyn = 20
+d = [np.nan, 0.25, 0.3, 0.2]
+theta_max = 4  # Maximum value of Hill's coefficient
+ln_pmax = 1.0  # Logarithm of the oxygen partial pressure value at which hmax is determined
+s = 4
+
+# Define gradient at r=0
+dc_dr_0 = 0.0  # Gradient at r=0
+
+# Initialize concentration field as a 3D array
+c = np.zeros((Nr, Nt, 4))  # 4 components
+
+# Set initial condition for all components at t=0
+c0 = np.array([0.1, 0.3, 0.3, 0.3])
+
+c[:, 0, :] = c0  # Set the initial conditions
+
+# Define function to calculate modified Hill's coefficient
+def theta_redefined(c):
+    epsilon = 1e-10
+    thetai = []
+    for i in range(c.shape[0]):
+        s_squared = np.log(np.maximum(c[i], epsilon) / np.exp(ln_pmax)) / s
+        if s_squared != 0:
+            thetai.append(((theta_max - 1) / (1 + s_squared**2) + 1))
+        else:
+            # Handle the case where s_squared is zero to avoid division by zero
+            thetai.append(theta_max)
+    return thetai
+
+# Time-stepping loop to solve the PDE
+for n in range(Nt - 1):
+    for i in range(1, Nr - 1):
+        thetai = theta_redefined(c[i, n, :])  # Calculate the modified Hill's coefficient
+
+        for j in range(4):  # Loop over components
+            current_c = c[i, n, j]
+
+            # Apply spatial diffusion term first
+            d2c_dr2 = (c[i + 1, n, j] - 2 * current_c + c[i - 1, n, j]) / (dr**2)
+            c[i, n + 1, j] = current_c + (dt / r[i]) * d2c_dr2
+
+            # Calculate the flux terms
+            epsilon = 1e-10  # Small positive value to avoid invalid values
+            if j == 0:
+                J_c = b[1] * c[i, n, 1] + b[2] * c[i, n, 2] + b[3] * c[i, n, 3]
+                Jd_c = 0
+            else:
+                J_c = csyn * c[i, n, 0] / (1 + K * (np.maximum(c[i, n, j], epsilon) ** thetai[j]))
+                Jd_c = d[j] * c[i, n, j]
+
+            c[i, n + 1, j] = current_c + dt * (J_c - Jd_c)
+
+        # Enforce the gradient condition at r=0
+        for j in range(4):
+            c[0, n + 1, j] = c[1, n + 1, j] + dr * dc_dr_0
+
+# Function to calculate Lyapunov Exponents
+def calculate_LLE():
+    # Number of perturbation tests for each trajectory
+    total_step_num = 50
+    # Magnitude of the perturbation
+    perturb_scale = 0.1
+    # Time span for calculating the exponential divergent of Lyapunov Exponent
+    Tstep_LLE = 20
+    
+    # Initialize arrays to store Lyapunov Exponents
+    spec_rec = np.empty(total_step_num)
+    
+    for s in range(total_step_num):
+        # Generate random perturbation
+        perturb_seed = np.random.randn(4)
+        perturb_ini = perturb_scale * perturb_seed / np.linalg.norm(perturb_seed)
+        c_perturb = c.copy()
+        c_perturb[:, -1, :] += perturb_ini
+        
+        for n in range(Nt - 1):
+            # Time-stepping loop to update the perturbed concentration field
+            for i in range(1, Nr - 1):
+                thetai = theta_redefined(c_perturb[i, n, :])
+                for j in range(4):
+                    current_c = c_perturb[i, n, j]
+                    
+                    # Apply spatial diffusion term first
+                    d2c_dr2 = (c_perturb[i + 1, n, j] - 2 * current_c + c_perturb[i - 1, n, j]) / (dr**2)
+                    c_perturb[i, n + 1, j] = current_c + (dt / r[i]) * d2c_dr2
+                    
+                    # Calculate the flux terms
+                    epsilon = 1e-10  # Small positive value to avoid invalid values
+                    if j == 0:
+                        J_c = b[1] * c_perturb[i, n, 1] + b[2] * c_perturb[i, n, 2] + b[3] * c_perturb[i, n, 3]
+                        Jd_c = 0
+                    else:
+                        # Ensure c_perturb is not negative to prevent invalid values
+                        c_perturb_positive = np.maximum(c_perturb[i, n, j], epsilon)
+                        J_c = csyn * c_perturb[i, n, 0] / (1 + K * (c_perturb_positive ** thetai[j]))
+                        Jd_c = d[j] * c_perturb[i, n, j]
+                    
+                    c_perturb[i, n + 1, j] = current_c + dt * (J_c - Jd_c)
+                
+                # Enforce the gradient condition at r=0
+                for j in range(4):
+                    c_perturb[0, n + 1, j] = c_perturb[1, n + 1, j] + dr * dc_dr_0
+        
+        # Calculate the Lyapunov Exponent for this perturbation
+        norm_diff = np.linalg.norm(c_perturb[:, -1, :] - c[:, -1, :])
+        spec_rec[s] = np.log(norm_diff) / (Tstep_LLE * s)
+    
+    # Calculate the average Lyapunov Exponent
+    LLE = np.nanmean(spec_rec)  # Use nanmean to handle NaN values
+    return LLE
+
+# Calculate LLE
+LLE = calculate_LLE()
+
+# Linearization around the steady state
+# We will use finite differences to approximate derivatives
+delta = 1e-6  # Small perturbation value
+
+# Define a function to calculate the derivatives at the steady state
+def derivatives_steady_state():
+    # Initialize arrays to store the derivatives
+    dC_dt = np.zeros((Nr, 4))
+    dP_dt = np.zeros((4,))
+
+    # Calculate derivatives for concentration components
+    for i in range(4):
+        for r_idx in range(Nr):
+            # Perturb the concentration component
+            c_perturbed = c.copy()
+            c_perturbed[r_idx, -1, i] += delta
+
+            # Re-run the time-stepping loop to update the perturbed concentration field
+            for n in range(Nt - 1):
+                for j in range(1, Nr - 1):
+                    thetai = theta_redefined(c_perturbed[j, n, :])
+
+                    current_c = c_perturbed[j, n, i]
+                    d2c_dr2 = (c_perturbed[j + 1, n, i] - 2 * current_c + c_perturbed[j - 1, n, i]) / (dr**2)
+                    c_perturbed[j, n + 1, i] = current_c + dt * d2c_dr2
+
+                for j in range(4):
+                    if j == 0:
+                        J_c = b[1] * c_perturbed[r_idx, n, 1] + b[2] * c_perturbed[r_idx, n, 2] + b[3] * c_perturbed[r_idx, n, 3]
+                        Jd_c = 0
+                    else:
+                        J_c = csyn * c_perturbed[r_idx, n, 0] / (1 + K * (np.maximum(c_perturbed[r_idx, n, j], epsilon) ** thetai[j]))
+                        Jd_c = d[j] * c_perturbed[r_idx, n, j]
+                    c_perturbed[r_idx, n + 1, j] = current_c + dt * (J_c - Jd_c)
+
+            # Calculate the time derivative for the perturbed concentration component
+            dC_dt[r_idx, i] = (c_perturbed[r_idx, -1, i] - c[-1, -1, i]) / (delta * dt)
+
+        # Calculate derivatives for production rates
+        # Assuming steady state for production rates, so their derivatives are zero
+        dP_dt[i] = 0.0
+
+    return dC_dt, dP_dt
+
+# Calculate derivatives at the steady state
+dC_dt_steady_state, dP_dt_steady_state = derivatives_steady_state()
+
+# Now, we can set up the linear system and calculate the eigenvalues
+# The linear system is in the form A * x = 0, where x is a vector containing the perturbations in concentration and production rates
+
+# Combine the derivatives into a single vector
+x = np.concatenate((dC_dt_steady_state.flatten(), dP_dt_steady_state))
+
+# Calculate the Jacobian matrix A
+# We will use finite differences to approximate the Jacobian
+delta_x = delta  # Small perturbation in x
+
+A = np.zeros((5 * Nr + 4, 5 * Nr + 4))
+
+# Calculate the first block (perturbations in concentration components)
+for i in range(4):
+    A[i * Nr:(i + 1) * Nr, i * Nr:(i + 1) * Nr] = (c[:, -1, i] / delta_x) * np.identity(Nr)
+
+# Calculate the second block (perturbations in production rates)
+# Adjust the range to match the correct part of the Jacobian
+for i in range(4):
+    A[i * Nr:(i + 1) * Nr, 4 * Nr + i] = 1 / delta_x  # Adjust the range and values accordingly
+
+# Calculate eigenvalues of A
+eigenvalues, eigenvectors = eig(A)
+
+# Print the eigenvalues
+print("Eigenvalues:")
+print(eigenvalues)
